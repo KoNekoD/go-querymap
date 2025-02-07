@@ -9,15 +9,21 @@ import (
 	"strings"
 )
 
+// anyList - type for storing a slice of arbitrary elements.
 type anyList []any
 
-// QueryMap - a map of query parameters. "any" can be one of: string, []string, QueryMap, anyList
+// QueryMap is a map storing key-values from query-parameters.
+// The value can be of one of the following types: string, []string, QueryMap, anyList.
 type QueryMap map[string]any
 
+// newQueryMap creates and returns an empty QueryMap.
 func newQueryMap() QueryMap {
 	return make(QueryMap)
 }
 
+// set sets the `untypedValue` value in the map by key `key`.
+// If the value by key already exists, the method correctly merges the
+// new data with old data (string, []string, anyList, QueryMap).
 func (q QueryMap) set(key string, untypedValue any) QueryMap {
 	untypedEntry, ok := q[key]
 	if !ok {
@@ -37,6 +43,7 @@ func (q QueryMap) set(key string, untypedValue any) QueryMap {
 		case QueryMap: // string1 + {key1: val1, key2: val2} = []any{string1, {key1: val1, key2: val2}}
 			q[key] = anyList{entry, value}
 		}
+
 	case []string:
 		switch value := untypedValue.(type) {
 		case string: // []string{string1, string2} + string3 = []string{string1, string2, string3}
@@ -56,6 +63,7 @@ func (q QueryMap) set(key string, untypedValue any) QueryMap {
 			}
 			q[key] = append(slc, value)
 		}
+
 	case anyList:
 		switch value := untypedValue.(type) {
 		case string: // []any{var1, var2} + string3 = []any{var1, var2, string3}
@@ -70,6 +78,7 @@ func (q QueryMap) set(key string, untypedValue any) QueryMap {
 		case QueryMap: // []any{var1, var2} + {key1: val1} = []any{var1, var2, {key1: val1}} or can merge(not needed)
 			q[key] = append(entry, value)
 		}
+
 	case QueryMap:
 		switch value := untypedValue.(type) {
 		case string: // {key1: val1} + string2 = []any{{key1: val1}, string2}
@@ -94,24 +103,26 @@ func (q QueryMap) set(key string, untypedValue any) QueryMap {
 	return q
 }
 
+// nestedQuery - recursively parses the key of the form "key[a][b]" and forms nested structures.
 func nestedQuery(data QueryMap, key string, value []string) QueryMap {
 	nextStart := strings.IndexRune(key, '[')
 	nextEnd := strings.IndexRune(key, ']')
 
 	currentKey := key
 
-	if nextStart == -1 && nextEnd != -1 && len(key) == nextEnd+1 { // name]
+	if nextStart == -1 && nextEnd != -1 && len(key) == nextEnd+1 { // key]
 		currentKey = key[:nextEnd]
-	} else if nextStart != -1 && nextEnd != -1 && nextStart+1 == nextEnd { // name[]
+	} else if nextStart != -1 && nextEnd != -1 && nextStart+1 == nextEnd { // key[]
 		currentKey = key[:nextStart]
-	} else if nextEnd+1 == nextStart { // name][
+	} else if nextEnd+1 == nextStart { // key][
 		currentKey = key[:nextEnd]
-	} else if nextStart != -1 && nextStart < nextEnd { // name[a] or name[]
+	} else if nextStart != -1 && nextStart < nextEnd { // key[a] or key[]
 		currentKey = key[:nextStart]
 	}
 
-	// name[] or name][] and no any text after
-	// regex: \[\]$ OR regex: \]\[$
+	// If the format is "key[]" or "key][]"
+	//  key[] or key][] and no any text after
+	//  regex: \[\]$ OR regex: \]\[$
 	if nextStart+1 == nextEnd && nextEnd+1 == len(key) || nextEnd != -1 && nextStart > nextEnd && key[nextStart:] == "[]" && nextStart+2 == len(key) {
 		return data.set(currentKey, value)
 	}
@@ -126,12 +137,18 @@ func nestedQuery(data QueryMap, key string, value []string) QueryMap {
 
 		return data.set(currentKey, nestedQuery(newQueryMap(), nextKey, value))
 	}
+
+	// If there is only one value, write it as string
 	if len(value) == 1 {
 		return data.set(currentKey, value[0])
 	}
+
+	// Otherwise, we save the slice
 	return data.set(currentKey, value)
 }
 
+// FromURL parses the *url.URL object and returns a QueryMap representing
+// all its query parameters as a nested structure.
 func FromURL(URL *url.URL) QueryMap {
 	data := newQueryMap()
 
@@ -139,12 +156,14 @@ func FromURL(URL *url.URL) QueryMap {
 	urlQueryKeys := maps.Keys(urlQuery)
 	slices.Sort(urlQueryKeys)
 
+	// First sort the keys for a predictable order
 	for _, key := range urlQueryKeys {
 		value := urlQuery[key]
 
 		nestedQuery(data, key, value)
 	}
 
+	// Normalize the values (converting a set of numeric keys to a slice)
 	for k, v := range data {
 		data[k] = NormalizeSlicesNumbersIndexes(v)
 	}
@@ -152,6 +171,8 @@ func FromURL(URL *url.URL) QueryMap {
 	return data
 }
 
+// ToStruct converts QueryMap into a structure of type T using mapstructure.
+// The fields of the structure are read by the `json` tag.
 func ToStruct[T any](m QueryMap) (*T, error) {
 	var result T
 
@@ -164,10 +185,14 @@ func ToStruct[T any](m QueryMap) (*T, error) {
 	return &result, nil
 }
 
+// FromURLToStruct is a convenient function that combines FromURL and ToStruct.
+// Accepts *url.URL and tries to convert the query string into a T structure.
 func FromURLToStruct[T any](URL *url.URL) (*T, error) {
 	return ToStruct[T](FromURL(URL))
 }
 
+// FromURLStringToStruct is an additional wrapper that parses the URL string,
+// and then calls FromURLToStruct.
 func FromURLStringToStruct[T any](URL string) (*T, error) {
 	parsedUrl, err := url.Parse(URL)
 	if err != nil {
@@ -177,6 +202,9 @@ func FromURLStringToStruct[T any](URL string) (*T, error) {
 	return FromURLToStruct[T](parsedUrl)
 }
 
+// NormalizeSlicesNumbersIndexes recursively checks whether the value is
+// a set of numeric keys, and if so, converts it to a slice (anyList).
+// For example, QueryMap{"0": "first", "1": "second"} => []any{"first", "second"}.
 func NormalizeSlicesNumbersIndexes(v any) any {
 	switch value := v.(type) {
 	case string:
@@ -193,6 +221,8 @@ func NormalizeSlicesNumbersIndexes(v any) any {
 				keyAreNumbers++
 			}
 		}
+
+		// If all keys are numbers, sort and turn into a slice
 		if total == keyAreNumbers {
 			slc := anyList{}
 
@@ -205,6 +235,7 @@ func NormalizeSlicesNumbersIndexes(v any) any {
 			return slc
 		}
 
+		// Otherwise recursively process nested values
 		for k, v := range value {
 			value[k] = NormalizeSlicesNumbersIndexes(v)
 		}
@@ -218,5 +249,6 @@ func NormalizeSlicesNumbersIndexes(v any) any {
 		return entry
 	}
 
+	// If not one of the above cases, return as is
 	return v
 }
