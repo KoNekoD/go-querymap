@@ -573,3 +573,13 @@ func TestToStructError(t *testing.T) {
 		}
 	}
 }
+
+func TestFromValuesToStruct(t *testing.T) {
+	v, err := FromValuesToStruct[struct {
+		Name string
+	}](url.Values{"name": []string{"John"}})
+	panicIfErr(err)
+	if v.Name != "John" {
+		t.Errorf("Expected name to be 'John', got %v", v)
+	}
+}
