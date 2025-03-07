@@ -150,9 +150,14 @@ func nestedQuery(data QueryMap, key string, value []string) QueryMap {
 // FromURL parses the *url.URL object and returns a QueryMap representing
 // all its query parameters as a nested structure.
 func FromURL(URL *url.URL) QueryMap {
+	return FromValues(URL.Query())
+}
+
+// FromValues parses the url.Values object and returns a QueryMap representing
+// all its query parameters as a nested structure.
+func FromValues(urlQuery url.Values) QueryMap {
 	data := newQueryMap()
 
-	urlQuery := URL.Query()
 	urlQueryKeys := maps.Keys(urlQuery)
 	slices.Sort(urlQueryKeys)
 
@@ -189,6 +194,12 @@ func ToStruct[T any](m QueryMap) (*T, error) {
 // Accepts *url.URL and tries to convert the query string into a T structure.
 func FromURLToStruct[T any](URL *url.URL) (*T, error) {
 	return ToStruct[T](FromURL(URL))
+}
+
+// FromValuesToStruct is a convenient function that combines FromValues and ToStruct.
+// Accepts url.Values and tries to convert the query string into a T structure.
+func FromValuesToStruct[T any](values url.Values) (*T, error) {
+	return ToStruct[T](FromValues(values))
 }
 
 // FromURLStringToStruct is an additional wrapper that parses the URL string,
