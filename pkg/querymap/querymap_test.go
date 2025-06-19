@@ -3,8 +3,10 @@ package querymap
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/mitchellh/mapstructure"
 	"net/url"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -581,5 +583,132 @@ func TestFromValuesToStruct(t *testing.T) {
 	panicIfErr(err)
 	if v.Name != "John" {
 		t.Errorf("Expected name to be 'John', got %v", v)
+	}
+}
+
+type TestStruct1 struct {
+	Name string `json:"name,omitempty"`
+}
+
+type TestStruct2 struct {
+	Longitude float64 `json:"longitude,omitempty"`
+	Latitude  float64 `json:"latitude,omitempty"`
+}
+
+type TestStruct3 struct {
+	Height float64 `json:"height,omitempty"`
+	Width  float64 `json:"width,omitempty"`
+}
+
+type TestStruct4 struct {
+	Title      *string                   `json:"title,omitempty"`
+	Names      []*TestStruct1            `json:"names,omitempty"`
+	Locations1 map[string][]*TestStruct2 `json:"locations_1,omitempty"`
+	Locations2 map[string][]*TestStruct2 `json:"locations_2,omitempty"`
+	View       *TestStruct3              `json:"view,omitempty"`
+	Views      []*TestStruct3            `json:"views,omitempty"`
+	Immutable  TestStruct3               `json:"immutable"`
+	Count      int                       `json:"count,omitempty"`
+}
+
+func TestNewQueryParametersFromValue(t *testing.T) {
+	type args struct {
+		value interface{}
+	}
+	tests := []struct {
+		name string
+		args args
+		want map[string][]string
+	}{
+		{
+			name: "test nested struct",
+			args: args{value: TestStruct4{}},
+			want: map[string][]string{
+				"view.width":       {"number"},
+				"views[].width":    {"number"},
+				"title":            {"string", "null"},
+				"names[].name":     {"string"},
+				"immutable.width":  {"number"},
+				"views[].height":   {"number"},
+				"immutable.height": {"number"},
+				"view.height":      {"number"},
+				"count":            {"integer"},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(
+			tt.name, func(t *testing.T) {
+				// Test how in will be decoded
+				data := map[string]any{
+					"view[width]":       3.14,
+					"view[height]":      3.14,
+					"title":             "test", // or nil
+					"names[0][name]":    "123",  // or nil
+					"immutable[width]":  3.14,
+					"views[0][width]":   3.14,
+					"views[0][height]":  3.14,
+					"immutable[height]": 3.14,
+					"count":             100,
+				}
+				title := "test"
+				dataAsStruct := TestStruct4{
+					Title: &title,
+					Names: []*TestStruct1{{Name: "123"}},
+					View: &TestStruct3{
+						Height: 3.14,
+						Width:  3.14,
+					},
+					Views: []*TestStruct3{{Height: 3.14, Width: 3.14}},
+					Immutable: TestStruct3{
+						Height: 3.14,
+						Width:  3.14,
+					},
+					Count: 100,
+				}
+
+				queryParts := make([]string, 0)
+				for k, untypedValue := range data {
+					switch v := untypedValue.(type) {
+					case string:
+						queryPart := k + "=" + v
+						queryParts = append(queryParts, queryPart)
+					case float64:
+						queryPart := k + "=" + strconv.FormatFloat(v, 'f', -1, 64)
+						queryParts = append(queryParts, queryPart)
+					case int:
+						queryPart := k + "=" + strconv.Itoa(v)
+						queryParts = append(queryParts, queryPart)
+					case nil:
+						queryPart := k
+						queryParts = append(queryParts, queryPart)
+					}
+				}
+
+				encodedUrl := "example.com?" + strings.Join(queryParts, "&")
+
+				urlStruct, err := url.Parse(encodedUrl)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				queryMap := FromURL(urlStruct)
+				mappedStruct := TestStruct4{}
+				_ = mapstructure.WeakDecode(queryMap, &mappedStruct)
+
+				if !reflect.DeepEqual(mappedStruct, dataAsStruct) {
+					decodedJson, _ := json.Marshal(queryMap)
+					dataJson, _ := json.Marshal(dataAsStruct)
+
+					t.Errorf(
+						"NewQueryParametersFromValue() = %v, want %v \n\nG\t %v \nW\t %v",
+						queryMap,
+						data,
+						string(decodedJson),
+						string(dataJson),
+					)
+				}
+			},
+		)
 	}
 }
